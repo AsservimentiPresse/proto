@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>MR Event Based Pinch System</title>
+<title>MR Highlight UI</title>
 
 <style>
 body { margin:0; overflow:hidden; }
@@ -17,9 +17,7 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.125/build/three.mod
 import { ARButton } from "https://cdn.jsdelivr.net/npm/three@0.125/examples/jsm/webxr/ARButton.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.125/examples/jsm/loaders/GLTFLoader.js";
 
-// =====================
 // SCENE
-// =====================
 const scene = new THREE.Scene();
 
 const camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.01, 40);
@@ -34,9 +32,7 @@ document.body.appendChild(ARButton.createButton(renderer,{ requiredFeatures:["hi
 scene.add(new THREE.HemisphereLight(0xffffff,0x444444,2));
 scene.add(new THREE.DirectionalLight(0xffffff,2));
 
-// =====================
 // MODEL
-// =====================
 let model;
 
 const loader = new GLTFLoader();
@@ -53,160 +49,170 @@ loader.load("mahle.glb",(gltf)=>{
     model.position.set(0,0,-1);
 });
 
-// =====================
 // CONTROLLERS
-// =====================
-const controller0 = renderer.xr.getController(0); // sinistra (UI)
-const controller1 = renderer.xr.getController(1); // destra (interaction)
+const left = renderer.xr.getController(0);
+const right = renderer.xr.getController(1);
 
-scene.add(controller0);
-scene.add(controller1);
+scene.add(left);
+scene.add(right);
 
-// =====================
-// LASER VISUAL
-// =====================
+// LASER
 function makeLaser(color){
-
     const geo=new THREE.BufferGeometry().setFromPoints([
         new THREE.Vector3(0,0,0),
         new THREE.Vector3(0,0,-1)
     ]);
-
-    const line=new THREE.Line(
-        geo,
-        new THREE.LineBasicMaterial({color})
-    );
-
+    const line=new THREE.Line(geo,new THREE.LineBasicMaterial({color}));
     line.scale.z=10;
     return line;
 }
 
-controller0.add(makeLaser(0x00ff00));
-controller1.add(makeLaser(0xff0000));
+left.add(makeLaser(0x00ff00));
+right.add(makeLaser(0xff0000));
 
-// =====================
-// MODE SYSTEM (LEFT HAND)
-// =====================
+// MODE
 let mode="move";
 let frozen=false;
 
-// =====================
-// UI (LEFT HAND)
-// =====================
+// UI
 const raycaster=new THREE.Raycaster();
 const tempMatrix=new THREE.Matrix4();
 
-const modes=["move","rotate","zoom","lock"];
+const modes=[
+    {name:"MOVE", color:0x00ffcc},
+    {name:"ROTATE", color:0xffcc00},
+    {name:"ZOOM", color:0x66aaff},
+    {name:"LOCK", color:0xff4444}
+];
+
 const ui=[];
 
 for(let i=0;i<modes.length;i++){
 
-    const m=new THREE.Mesh(
+    const group=new THREE.Group();
+
+    const mat=new THREE.MeshStandardMaterial({
+        color:modes[i].color,
+        emissive:0x000000
+    });
+
+    const box=new THREE.Mesh(
         new THREE.BoxGeometry(0.09,0.09,0.09),
-        new THREE.MeshStandardMaterial({color:0x333333})
+        mat
     );
 
-    m.position.set(-0.3 + i*0.23, 0.8, -0.6);
+    const canvas=document.createElement("canvas");
+    canvas.width=256;
+    canvas.height=128;
+    const ctx=canvas.getContext("2d");
 
-    m.userData.mode=modes[i];
+    ctx.fillStyle="white";
+    ctx.font="bold 60px Arial";
+    ctx.fillText(modes[i].name,20,80);
 
-    scene.add(m);
-    ui.push(m);
+    const tex=new THREE.CanvasTexture(canvas);
+
+    const label=new THREE.Mesh(
+        new THREE.PlaneGeometry(0.15,0.07),
+        new THREE.MeshBasicMaterial({map:tex,transparent:true})
+    );
+
+    label.position.set(0,-0.08,0);
+
+    group.add(box);
+    group.add(label);
+
+    group.position.set(-0.35 + i*0.23, 0.7, -0.6);
+
+    group.userData.mode=modes[i].name.toLowerCase();
+    group.userData.baseColor = modes[i].color;
+
+    scene.add(group);
+    ui.push(group);
 }
 
-// select UI
-controller0.addEventListener("selectstart",()=>controller0.userData.select=true);
-controller0.addEventListener("selectend",()=>controller0.userData.select=false);
+// INPUT
+left.addEventListener("selectstart",()=>left.userData.click=true);
+left.addEventListener("selectend",()=>left.userData.click=false);
 
+// HIGHLIGHT SYSTEM
 function updateUI(){
 
-    tempMatrix.identity().extractRotation(controller0.matrixWorld);
+    tempMatrix.identity().extractRotation(left.matrixWorld);
 
-    raycaster.ray.origin.setFromMatrixPosition(controller0.matrixWorld);
+    raycaster.ray.origin.setFromMatrixPosition(left.matrixWorld);
     raycaster.ray.direction.set(0,0,-1).applyMatrix4(tempMatrix);
 
-    const hits=raycaster.intersectObjects(ui);
+    const hits=raycaster.intersectObjects(ui,true);
 
-    ui.forEach(b=>b.material.color.set(0x333333));
+    // RESET
+    ui.forEach(b=>{
+        const mesh = b.children[0];
+        mesh.material.color.set(b.userData.baseColor);
+        mesh.material.emissive.set(0x000000);
+    });
 
     if(hits.length){
 
-        const obj=hits[0].object;
-        obj.material.color.set(0x00ffcc);
+        const root=hits[0].object.parent;
+        const mesh = root.children[0];
 
-        if(controller0.userData.select){
-            if(obj.userData.mode==="lock"){
+        // 🔥 HIGHLIGHT
+        mesh.material.emissive.set(0x222222);
+        mesh.material.color.offsetHSL(0,0,0.2);
+
+        // CLICK
+        if(left.userData.click){
+
+            if(root.userData.mode==="lock"){
                 frozen=!frozen;
             } else {
-                mode=obj.userData.mode;
+                mode=root.userData.mode;
             }
         }
     }
 }
 
-// =====================
-// RIGHT HAND RAYCAST TARGET
-// =====================
-const raycasterR=new THREE.Raycaster();
-const tempMatrixR=new THREE.Matrix4();
+// TRUE GRAB MOVE
+let grabbing=false;
 
-let hoverPoint=new THREE.Vector3();
-
-// =====================
-// PINCH STATE (EVENT BASED)
-// =====================
-let pinch=false;
-
-controller1.addEventListener("selectstart",()=>{
-
-    if(frozen) return;
-
-    pinch=true;
-
-    raycasterR.ray.origin.setFromMatrixPosition(controller1.matrixWorld);
-    tempMatrixR.identity().extractRotation(controller1.matrixWorld);
-    raycasterR.ray.direction.set(0,0,-1).applyMatrix4(tempMatrixR);
-
-    const hit=raycasterR.intersectObject(model,true);
-
-    if(hit.length){
-        hoverPoint.copy(hit[0].point);
-
-        applyAction();
-    }
-});
-
-controller1.addEventListener("selectend",()=>{
-
-    pinch=false;
-});
-
-// =====================
-// ACTION EXECUTION (ONE SHOT PER PINCH)
-// =====================
-function applyAction(){
+right.addEventListener("selectstart",()=>{
 
     if(!model || frozen) return;
 
     if(mode==="move"){
-        model.position.lerp(new THREE.Vector3(hoverPoint.x,hoverPoint.y,hoverPoint.z),0.5);
+        grabbing=true;
+        right.attach(model);
+    }
+});
+
+right.addEventListener("selectend",()=>{
+
+    if(!grabbing) return;
+
+    grabbing=false;
+    scene.attach(model);
+});
+
+// OTHER MODES
+function updateOther(){
+
+    if(!model || frozen) return;
+
+    if(mode==="rotate" && grabbing){
+        model.rotation.y += 0.03;
     }
 
-    if(mode==="rotate"){
-        model.rotation.y += 0.5;
-    }
-
-    if(mode==="zoom"){
-        model.scale.multiplyScalar(1.05);
+    if(mode==="zoom" && grabbing){
+        model.scale.multiplyScalar(1.01);
     }
 }
 
-// =====================
 // LOOP
-// =====================
 renderer.setAnimationLoop(()=>{
 
     updateUI();
+    updateOther();
 
     renderer.render(scene,camera);
 });
